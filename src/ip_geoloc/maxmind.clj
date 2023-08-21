@@ -1,15 +1,20 @@
 (ns ip-geoloc.maxmind
-  (:require [clojure.java.io :as io]
-            [safely.core :refer [safely sleep]]
-            [clojure.tools.logging :as log])
-  (:require [pandect.algo.md5 :as hash])
-  (:require [clj-http.client :as http])
-  (:import com.maxmind.geoip2.DatabaseReader$Builder
-           com.maxmind.geoip2.exception.AddressNotFoundException
-           com.maxmind.geoip2.model.CityResponse
-           [com.maxmind.geoip2.record City Continent
-            Country Location Postal RepresentedCountry Subdivision Traits]))
+  (:require
+   [clj-http.client       :as http]
+   [clojure.java.io       :as io]
+   [clojure.tools.logging :as log]
+   [pandect.algo.md5      :as hash]
+   [safely.core           :refer [safely sleep]]
+   )
+  (:import
+   java.io.File
+   com.maxmind.geoip2.DatabaseReader$Builder
+   com.maxmind.geoip2.exception.AddressNotFoundException
+   com.maxmind.geoip2.model.CityResponse
+   [com.maxmind.geoip2.record City Continent
+    Country Location Postal RepresentedCountry Subdivision Traits]))
 
+(defn url? [x] (instance? java.net.URL x))
 
 
 (def ^:const DEFAULTS
@@ -174,11 +179,14 @@
   GeoIpProvider
 
   (init [this]
-    (let [db-path (if (string? db-path) db-path (.getAbsolutePath db-path))
-          db (if (.endsWith db-path ".gz")
-               (java.util.zip.GZIPInputStream.
-                (io/input-stream db-path))
-               (io/input-stream db-path))]
+    (let [db-path (cond
+                    (url? db-path)           (.getAbsolutePath (io/file db-path))
+                    (instance? File db-path) (.getAbsolutePath db-path)
+                    (string? db-path)        db-path)
+          db      (if (.endsWith db-path ".gz")
+                    (java.util.zip.GZIPInputStream.
+                      (io/input-stream db-path))
+                    (io/input-stream db-path))]
       (MaxMind2. db-path (.build (DatabaseReader$Builder. db)))))
 
   (close [this]
@@ -197,19 +205,19 @@
             city      (->clojure (.getCity data))
             postal    (->clojure (.getPostal data))
             location  (->clojure (.getLocation data))]
-        {:continent (:code continent)
+        {:continent      (:code continent)
          :countryIsoCode (:isoCode country)
-         :country (:name country)
-         :subdivisions subdivs
-         :city (:name city)
-         :postCode (:code postal)
-         :latitude (:latitude location)
-         :longitude (:longitude location)})))
+         :country        (:name country)
+         :subdivisions   subdivs
+         :city           (:name city)
+         :postCode       (:code postal)
+         :latitude       (:latitude location)
+         :longitude      (:longitude location)})))
 
   (coordinates [this ip]
     (if-ip-exists
-     (->clojure
-      (.getLocation (.city db (java.net.InetAddress/getByName ip))))))
+        (->clojure
+          (.getLocation (.city db (java.net.InetAddress/getByName ip))))))
 
   (database-location [this]
     db-path))
@@ -360,30 +368,35 @@
 
 
 (defn start-maxmind [config]
-  (let [{:keys [database-file database-folder
-                auto-update provider
-                update-thread] :as cfg} (normalize-config config)]
+  (let [{:keys [database-file
+                database-folder
+                auto-update
+                provider
+                update-thread]
+         :as   cfg} (normalize-config config)]
 
     ;; if already started do nothing
-    (when-not @provider
+    (cond
+      database-file (swap! provider (constantly (init (MaxMind2. database-file nil))))
+      (not @provider)
+      (do
+        ;; if a specific file has been chosen
+        ;; use that one as initial database
+        (when database-file
+          (io/copy (io/input-stream database-file)
+                   (io/file (str database-folder "/GeoLite2-City.mmdb."
+                                 (System/currentTimeMillis) ".ok"))))
 
-      ;; if a specific file has been chosen
-      ;; use that one as initial database
-      (when database-file
-        (io/copy (io/input-stream database-file)
-                 (io/file (str database-folder "/GeoLite2-City.mmdb."
-                               (System/currentTimeMillis) ".ok"))))
-
-      ;; then we look for the last db available
-      ;; checking if a db is already present
-      (let [lastdb (find-last-available-db cfg)]
-        (if lastdb
-          (swap! provider (constantly (init (MaxMind2. lastdb nil))))
-          ;; if not present download one
-          (swap! provider (constantly (init (MaxMind2. (update-db cfg) nil)))))
-        ;; if auto-update is enabled then start background thread
-        (when auto-update
-          (start-update-db-background-thread! cfg))))
+        ;; then we look for the last db available
+        ;; checking if a db is already present
+        (let [lastdb (find-last-available-db cfg)]
+          (if lastdb
+            (swap! provider (constantly (init (MaxMind2. lastdb nil))))
+            ;; if not present download one
+            (swap! provider (constantly (init (MaxMind2. (update-db cfg) nil)))))
+          ;; if auto-update is enabled then start background thread
+          (when auto-update
+            (start-update-db-background-thread! cfg)))))
     cfg))
 
 
