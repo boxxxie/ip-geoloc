@@ -1,5 +1,8 @@
 (ns ip-geoloc.core
-  (:require [ip-geoloc.maxmind :as mmind]))
+  (:require
+   [ip-geoloc.maxmind :as mmind]
+   [ip-geoloc.util :as util]
+   ))
 
 
 (def ^:dynamic *provider* nil)
@@ -28,43 +31,25 @@
   (alter-var-root #'*provider*
                   (constantly (stop-provider *provider*))))
 
-;; thanks chatgpt
-(defn ip-to-int [ip]
-  (let [parts (map #(Integer/parseInt %) (.split ip "\\."))]
-    (reduce (fn [acc part] (+ (* acc 256) part)) 0 parts)))
-
-;; thanks chatgpt
-(defn int-to-ip [int-ip]
-  (format "%d.%d.%d.%d"
-          (bit-shift-right int-ip 24)
-          (bit-shift-right (bit-and int-ip 0x00FF0000) 16)
-          (bit-shift-right (bit-and int-ip 0x0000FF00) 8)
-          (bit-and int-ip 0x000000FF)))
-
-(defn- ip-conversion [ip]
-  (cond
-    (string? ip) ip
-    (int? ip)    (int-to-ip ip)))
-
 (defn full-geo-lookup
   ([ip]
    (full-geo-lookup *provider* ip))
   ([{:keys [provider]} ip]
-   (mmind/full-geo-lookup @provider (ip-conversion ip))))
+   (mmind/full-geo-lookup @provider (util/ip-conversion ip))))
 
 
 (defn coordinates
   ([ip]
    (coordinates *provider* ip))
   ([{:keys [provider]} ip]
-   (mmind/coordinates @provider (ip-conversion ip))))
+   (mmind/coordinates @provider (util/ip-conversion ip))))
 
 
 (defn geo-lookup
   ([ip]
    (geo-lookup *provider* ip))
   ([{:keys [provider]} ip]
-   (mmind/geo-lookup @provider (ip-conversion ip))))
+   (mmind/geo-lookup @provider (util/ip-conversion ip))))
 
 
 (comment
